@@ -30,12 +30,7 @@ contract GovernanceTest is Test {
         vm.startPrank(alice);
 
         // Create a proposal to toggle DAO state (by passing 0 value and address(0))
-        governance.createProposal(
-            "Toggle DAO State",
-            address(0),
-            0, // No ETH transfer
-            100 // duration in blocks
-        );
+        governance.createProposal("Toggle DAO State", Governance.ActionType.ToggleDAO, address(0), 0, "", 100);
         uint256 proposalId = 0; // First proposal has ID 0
 
         // Vote in favor
@@ -43,17 +38,17 @@ contract GovernanceTest is Test {
 
         // Fast forward to after voting deadline (101 blocks later to be safe)
         vm.roll(block.number + 101);
-        
+
         // Stop the current prank
         vm.stopPrank();
-        
+
         // Get the current DAO state
         bool wasActive = governance.daoActive();
-        
+
         // Execute the proposal as Alice
         vm.prank(alice);
         governance.executeProposal(proposalId);
-        
+
         // Verify the DAO state was toggled
         assertEq(governance.daoActive(), !wasActive, "DAO state should be toggled");
     }

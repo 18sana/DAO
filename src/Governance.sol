@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import "./Staking.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract Governance {
+contract Governance is ReentrancyGuard {
     Staking public stakingContract;
     address public daoTreasury;
     bool public daoActive = true;
 
     uint256 public minStakeToPropose = 1 ether; // Minimum stake to create a proposal
-    uint256 public maxProposalDuration = 500;   // Max duration in blocks
+    uint256 public maxProposalDuration = 500; // Max duration in blocks
     uint256 public minDescriptionLength = 10;
     uint256 public maxDescriptionLength = 500;
 
@@ -30,7 +32,7 @@ contract Governance {
         address proposer;
         address target;
         bool executed;
-        bool cancelled;   
+        bool cancelled;
         ActionType action;
         mapping(address => bool) voted;
     }
@@ -39,20 +41,11 @@ contract Governance {
 
     // EVENTS
     event ProposalCreated(
-        uint256 indexed proposalId,
-        address indexed proposer,
-        string description,
-        uint256 deadline,
-        ActionType action
+        uint256 indexed proposalId, address indexed proposer, string description, uint256 deadline, ActionType action
     );
-    event Voted(
-        uint256 indexed proposalId,
-        address indexed voter,
-        bool support,
-        uint256 votingPower
-    );
+    event Voted(uint256 indexed proposalId, address indexed voter, bool support, uint256 votingPower);
     event ProposalExecuted(uint256 indexed proposalId, bool success);
-    event ProposalCancelled(uint256 indexed proposalId, address cancelledBy); 
+    event ProposalCancelled(uint256 indexed proposalId, address cancelledBy);
     event ProposalSlashed(uint256 indexed proposalId, address proposer, uint256 amount);
 
     // CONSTRUCTOR
@@ -64,10 +57,7 @@ contract Governance {
 
     // MODIFIERS
     modifier onlyEligibleProposer() {
-        require(
-            stakingContract.stakedAmount(msg.sender) >= minStakeToPropose,
-            "Not enough stake to propose"
-        );
+        require(stakingContract.stakedAmount(msg.sender) >= minStakeToPropose, "Not enough stake to propose");
         _;
     }
 
@@ -87,14 +77,10 @@ contract Governance {
         uint256 _durationBlocks
     ) external onlyEligibleProposer {
         require(
-            bytes(_desc).length >= minDescriptionLength &&
-                bytes(_desc).length <= maxDescriptionLength,
+            bytes(_desc).length >= minDescriptionLength && bytes(_desc).length <= maxDescriptionLength,
             "Invalid description length"
         );
-        require(
-            _durationBlocks > 0 && _durationBlocks <= maxProposalDuration,
-            "Invalid duration"
-        );
+        require(_durationBlocks > 0 && _durationBlocks <= maxProposalDuration, "Invalid duration");
 
         Proposal storage p = proposals.push();
         p.description = _desc;
@@ -110,13 +96,7 @@ contract Governance {
         //  lock proposer's stake till proposal deadline
         stakingContract.lockUntil(msg.sender, p.deadline);
 
-        emit ProposalCreated(
-            proposals.length - 1,
-            msg.sender,
-            _desc,
-            p.deadline,
-            _action
-        );
+        emit ProposalCreated(proposals.length - 1, msg.sender, _desc, p.deadline, _action);
     }
 
     // VOTE
@@ -126,8 +106,7 @@ contract Governance {
         require(block.number <= p.deadline, "Voting ended");
         require(!p.voted[msg.sender], "Already voted");
 
-        uint256 votingPower = stakingContract.stakedAmount(msg.sender) +
-            stakingContract.pendingRewardsOf(msg.sender);
+        uint256 votingPower = stakingContract.stakedAmount(msg.sender) + stakingContract.pendingRewardsOf(msg.sender);
         require(votingPower > 0, "No voting power");
 
         if (_support) {
@@ -145,36 +124,42 @@ contract Governance {
     }
 
     // EXECUTE PROPOSAL
-    function executeProposal(uint256 _proposalId) external {
+    function executeProposal(uint256 _proposalId) external nonReentrant {
         Proposal storage p = proposals[_proposalId];
         require(!p.cancelled, "Proposal cancelled");
         require(block.number > p.deadline, "Voting not ended");
         require(!p.executed, "Already executed");
 
-        bool success = false;
+        p.executed = true;
 
-        if (p.votesFor > p.votesAgainst) {
-            if (p.action == ActionType.ToggleDAO) {
-                daoActive = !daoActive;
-                success = true;
-            } else if (p.action == ActionType.ETHTransfer) {
-                require(
-                    p.value <= address(this).balance,
-                    "Insufficient balance"
-                );
-                (success, ) = p.target.call{value: p.value}("");
-                require(success, "Proposal execution failed");
-            } else if (
-                p.action == ActionType.CallContract ||
-                p.action == ActionType.CustomUpdate
-            ) {
-                (success, ) = p.target.call(p.data);
-                require(success, "Proposal execution failed");
-            }
+        bool success = _executeWinningProposal(p);
+
+        emit ProposalExecuted(_proposalId, success);
+    }
+
+    function _executeWinningProposal(Proposal storage p) private returns (bool success) {
+        if (p.votesFor <= p.votesAgainst) {
+            return false;
         }
 
-        p.executed = true;
-        emit ProposalExecuted(_proposalId, success);
+        if (p.action == ActionType.ToggleDAO) {
+            daoActive = !daoActive;
+            return true;
+        }
+
+        if (p.action == ActionType.ETHTransfer) {
+            require(p.value <= address(this).balance, "Insufficient balance");
+            Address.sendValue(payable(p.target), p.value);
+            return true;
+        }
+
+        if (p.action == ActionType.CallContract || p.action == ActionType.CustomUpdate) {
+            // functionCall reverts on failure; capture return data for static analysis
+            bytes memory returndata = Address.functionCall(p.target, p.data);
+            return returndata.length >= 0;
+        }
+
+        return false;
     }
 
     //  CANCEL PROPOSAL
@@ -182,10 +167,7 @@ contract Governance {
         Proposal storage p = proposals[_proposalId];
         require(!p.executed, "Already executed");
         require(!p.cancelled, "Already cancelled");
-        require(
-            msg.sender == p.proposer || msg.sender == daoTreasury,
-            "Not authorized"
-        );
+        require(msg.sender == p.proposer || msg.sender == daoTreasury, "Not authorized");
 
         p.cancelled = true;
 
@@ -201,9 +183,7 @@ contract Governance {
     }
 
     // GETTER
-    function getProposal(
-        uint256 _proposalId
-    )
+    function getProposal(uint256 _proposalId)
         external
         view
         returns (

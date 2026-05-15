@@ -1,24 +1,26 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.30;
+pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title Staking Contract for Governance Tokens
 contract Staking {
+    using SafeERC20 for IERC20;
+
     IERC20 public govToken;
 
     struct Staker {
-        uint256 amount;        // tokens staked
-        uint256 rewardDebt;    // unclaimed rewards
-        uint256 lastBlock;     // last block when user interacted
+        uint256 amount; // tokens staked
+        uint256 rewardDebt; // unclaimed rewards
+        uint256 lastBlock; // last block when user interacted
     }
 
-    address public governance; // governance contract address 
-    uint256 public rewardRate = 1e18; // 1 GOV per block 
-    
+    address public governance; // governance contract address
+    uint256 public rewardRate = 1e18; // 1 GOV per block
+
     mapping(address => Staker) private stakers;
     mapping(address => uint256) public lockedUntil; // block number until which user's actions are locked
-   
 
     //EVENTS
     event Staked(address indexed user, uint256 amount);
@@ -38,7 +40,7 @@ contract Staking {
         govToken = IERC20(_govToken);
     }
 
-    /// @notice Governance contract sets itself 
+    /// @notice Governance contract sets itself
     function setGovernance(address _gov) external {
         require(governance == address(0), "Governance already set");
         require(_gov != address(0), "zero");
@@ -50,7 +52,7 @@ contract Staking {
         require(_amount > 0, "Cannot stake 0");
         _updateRewards(msg.sender);
 
-        govToken.transferFrom(msg.sender, address(this), _amount);
+        govToken.safeTransferFrom(msg.sender, address(this), _amount);
 
         stakers[msg.sender].amount += _amount;
         stakers[msg.sender].lastBlock = block.number;
@@ -71,7 +73,7 @@ contract Staking {
         user.rewardDebt = 0;
         user.lastBlock = block.number;
 
-        govToken.transfer(msg.sender, _amount + reward);
+        govToken.safeTransfer(msg.sender, _amount + reward);
 
         emit Unstaked(msg.sender, _amount, reward);
         if (reward > 0) {
@@ -88,7 +90,7 @@ contract Staking {
         require(reward > 0, "No rewards");
 
         stakers[msg.sender].rewardDebt = 0;
-        govToken.transfer(msg.sender, reward);
+        govToken.safeTransfer(msg.sender, reward);
 
         emit RewardsClaimed(msg.sender, reward);
     }
@@ -175,7 +177,7 @@ contract Staking {
                 toTransfer = bal; // transfer as much as available
             }
             if (toTransfer > 0) {
-                govToken.transfer(_to, toTransfer);
+                govToken.safeTransfer(_to, toTransfer);
             }
             emit Slashed(_user, toTransfer, _to);
         }
