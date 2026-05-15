@@ -52,8 +52,8 @@ contract Governance {
         uint256 votingPower
     );
     event ProposalExecuted(uint256 indexed proposalId, bool success);
-    event ProposalCancelled(uint256 indexed proposalId, address cancelledBy); // ✅ new
-    event ProposalSlashed(uint256 indexed proposalId, address proposer, uint256 amount); // ✅ new
+    event ProposalCancelled(uint256 indexed proposalId, address cancelledBy); 
+    event ProposalSlashed(uint256 indexed proposalId, address proposer, uint256 amount);
 
     // CONSTRUCTOR
     constructor(address _stakingContract, address _daoTreasury) {
